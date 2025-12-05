@@ -2,8 +2,8 @@
 
 import pytest
 
-from reit_risk_summarizer.services.sec.extractor import RiskFactorExtractor
 from reit_risk_summarizer.exceptions import RiskExtractionError
+from reit_risk_summarizer.services.sec.extractor import RiskFactorExtractor
 
 
 class TestRiskFactorExtractor:
@@ -17,17 +17,17 @@ class TestRiskFactorExtractor:
     def test_extract_empty_html(self):
         """Test that empty HTML raises error."""
         extractor = RiskFactorExtractor()
-        
+
         with pytest.raises(RiskExtractionError, match="Empty HTML content"):
             extractor.extract_risk_factors("")
-        
+
         with pytest.raises(RiskExtractionError, match="Empty HTML content"):
             extractor.extract_risk_factors("   ")
 
     def test_extract_by_item_header_simple(self):
         """Test extraction with simple Item 1A header."""
         extractor = RiskFactorExtractor(min_length=100)  # Lower minimum for testing
-        
+
         html = """
         <html>
             <body>
@@ -42,9 +42,9 @@ class TestRiskFactorExtractor:
             </body>
         </html>
         """
-        
+
         result = extractor.extract_risk_factors(html)
-        
+
         assert "risks and uncertainties" in result
         assert "Market conditions" in result
         assert "Regulatory changes" in result
@@ -54,7 +54,7 @@ class TestRiskFactorExtractor:
     def test_extract_by_item_header_variations(self):
         """Test extraction with various Item 1A header formats."""
         extractor = RiskFactorExtractor(min_length=100)  # Lower minimum for testing
-        
+
         # Test with "Item 1.A" format
         html1 = """
         <html>
@@ -69,7 +69,7 @@ class TestRiskFactorExtractor:
             </body>
         </html>
         """
-        
+
         result1 = extractor.extract_risk_factors(html1)
         assert "Risk factor content" in result1
         assert "Item 1.B" not in result1
@@ -77,7 +77,7 @@ class TestRiskFactorExtractor:
     def test_extract_stops_at_item_2(self):
         """Test that extraction stops at Item 2 if Item 1B is missing."""
         extractor = RiskFactorExtractor(min_length=100)  # Lower minimum for testing
-        
+
         html = """
         <html>
             <body>
@@ -92,9 +92,9 @@ class TestRiskFactorExtractor:
             </body>
         </html>
         """
-        
+
         result = extractor.extract_risk_factors(html)
-        
+
         assert "risk factors" in result.lower()
         assert "Properties" not in result
         assert "principal offices" not in result
@@ -102,7 +102,7 @@ class TestRiskFactorExtractor:
     def test_extract_with_nested_elements(self):
         """Test extraction with complex nested HTML structure."""
         extractor = RiskFactorExtractor(min_length=100)  # Lower minimum for testing
-        
+
         html = """
         <html>
             <body>
@@ -124,9 +124,9 @@ class TestRiskFactorExtractor:
             </body>
         </html>
         """
-        
+
         result = extractor.extract_risk_factors(html)
-        
+
         assert "Market Risks" in result
         assert "Operational Risks" in result
         assert "Credit risk" in result
@@ -134,20 +134,20 @@ class TestRiskFactorExtractor:
     def test_clean_text_removes_headers(self):
         """Test that text cleaning removes Item 1A header."""
         extractor = RiskFactorExtractor(min_length=50)  # Lower minimum for testing
-        
+
         text = "Item 1A. Risk Factors\nOur business faces various risks and uncertainties."
         cleaned = extractor._clean_text(text + " " * 50)  # Pad to meet minimum
-        
+
         # Header should be removed
         assert "Item 1A" not in cleaned or cleaned.index("Risk") < cleaned.index("Item 1A")
 
     def test_clean_text_normalizes_whitespace(self):
         """Test that text cleaning normalizes whitespace."""
         extractor = RiskFactorExtractor(min_length=100)  # Lower for testing
-        
+
         text = "Line 1\n\n\n\n\nLine 2    with    spaces\n\n\nLine 3" + " content" * 100
         cleaned = extractor._clean_text(text)
-        
+
         # Multiple blank lines should be reduced
         assert "\n\n\n" not in cleaned
         # Multiple spaces should be reduced
@@ -156,26 +156,26 @@ class TestRiskFactorExtractor:
     def test_clean_text_removes_page_numbers(self):
         """Test that text cleaning removes page numbers."""
         extractor = RiskFactorExtractor(min_length=100)  # Lower for testing
-        
+
         text = "Risk text here\n42\nMore risk text\n\n15\n\nEven more content" + " text" * 100
         cleaned = extractor._clean_text(text)
-        
+
         # Standalone numbers should be removed
         assert "\n42\n" not in cleaned
 
     def test_clean_text_rejects_short_text(self):
         """Test that very short extracted text raises error."""
         extractor = RiskFactorExtractor()  # Uses default min_length=10,000
-        
+
         short_text = "Too short"
-        
+
         with pytest.raises(RiskExtractionError, match="too short"):
             extractor._clean_text(short_text)
 
     def test_no_risk_factors_found(self):
         """Test error when no risk factors section exists."""
         extractor = RiskFactorExtractor()
-        
+
         html = """
         <html>
             <body>
@@ -184,14 +184,14 @@ class TestRiskFactorExtractor:
             </body>
         </html>
         """
-        
+
         with pytest.raises(RiskExtractionError, match="Could not locate Item 1A"):
             extractor.extract_risk_factors(html)
 
     def test_extract_handles_case_insensitive(self):
         """Test that extraction is case-insensitive."""
         extractor = RiskFactorExtractor(min_length=100)  # Lower minimum for testing
-        
+
         html = """
         <html>
             <body>
@@ -205,14 +205,14 @@ class TestRiskFactorExtractor:
             </body>
         </html>
         """
-        
+
         result = extractor.extract_risk_factors(html)
         assert "Risk content" in result
 
     def test_length_validation_with_defaults(self):
         """Test that default min_length (10,000 chars) catches suspiciously short extractions."""
         extractor = RiskFactorExtractor()  # Use defaults: min_length=10,000, raise_on_short=True
-        
+
         # Short extraction (like table of contents - 500 chars)
         html = """
         <html>
@@ -223,14 +223,14 @@ class TestRiskFactorExtractor:
             </body>
         </html>
         """
-        
+
         with pytest.raises(RiskExtractionError, match="too short"):
             extractor.extract_risk_factors(html)
 
     def test_length_validation_warning_only(self):
         """Test that raise_on_short=False logs warning instead of raising error."""
         extractor = RiskFactorExtractor(min_length=10_000, raise_on_short=False)
-        
+
         # Short extraction
         html = """
         <html>
@@ -241,7 +241,7 @@ class TestRiskFactorExtractor:
             </body>
         </html>
         """
-        
+
         # Should not raise, just log warning
         result = extractor.extract_risk_factors(html)
         assert len(result) > 0
@@ -253,9 +253,9 @@ class TestRiskFactorExtractor:
         extractor = RiskFactorExtractor(
             min_length=100,  # Won't trigger error
             warn_threshold=5000,  # Will trigger warning
-            raise_on_short=True
+            raise_on_short=True,
         )
-        
+
         html = """
         <html>
             <body>
@@ -266,7 +266,7 @@ class TestRiskFactorExtractor:
             </body>
         </html>
         """
-        
+
         # Should extract without error but will log warning (we can't easily test logging in unit tests)
         result = extractor.extract_risk_factors(html)
         assert len(result) > 100

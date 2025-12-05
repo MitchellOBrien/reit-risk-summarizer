@@ -1,6 +1,6 @@
 """SEC data services."""
 
-from .fetcher import SECFetcher
 from .extractor import RiskFactorExtractor
+from .fetcher import SECFetcher
 
 __all__ = ["SECFetcher", "RiskFactorExtractor"]
