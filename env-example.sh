@@ -1,0 +1,40 @@
+# LLM API Keys
+OPENAI_API_KEY=sk-your-openai-key-here
+ANTHROPIC_API_KEY=sk-ant-your-anthropic-key-here
+
+# Application Config
+APP_NAME="REIT Risk Summarizer"
+APP_VERSION="0.1.0"
+ENVIRONMENT=development  # development, staging, production
+LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR
+
+# SEC EDGAR API
+SEC_API_EMAIL=your.email@example.com
+SEC_API_USER_AGENT="YourName your.email@example.com"
+
+# LLM Configuration
+DEFAULT_LLM_MODEL=gpt-4
+LLM_TEMPERATURE=0.3
+LLM_MAX_TOKENS=2000
+
+# Caching
+CACHE_ENABLED=true
+CACHE_TTL_SECONDS=86400  # 24 hours
+CACHE_TYPE=memory  # memory or redis
+
+# Redis (if using)
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_DB=0
+REDIS_PASSWORD=
+
+# API Configuration
+API_HOST=0.0.0.0
+API_PORT=8000
+API_WORKERS=1
+API_RATE_LIMIT_PER_MINUTE=10
+
+# Evaluation
+GOLDEN_DATASET_PATH=evaluation/golden_dataset.csv
+EVALUATION_MODEL=gpt-4
+EVALUATION_RUNS_PER_TICKER=3
