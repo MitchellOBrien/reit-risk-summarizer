@@ -22,13 +22,14 @@ class Settings(BaseSettings):
     # API Keys
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
+    groq_api_key: str | None = None
 
     # SEC EDGAR
     sec_api_email: str = "your.email@example.com"
     sec_api_user_agent: str = "YourName your.email@example.com"
 
     # LLM Configuration
-    default_llm_model: str = "gpt-4"
+    default_llm_model: str = "huggingface/meta-llama/Llama-3.2-1B-Instruct"  # LOCAL, requires HF_TOKEN
     llm_temperature: float = 0.3
     llm_max_tokens: int = 2000
 
@@ -51,7 +52,7 @@ class Settings(BaseSettings):
 
     # Evaluation
     golden_dataset_path: str = "evaluation/golden_dataset.csv"
-    evaluation_model: str = "gpt-4"
+    evaluation_model: str = "groq/llama-3.3-70b-versatile"  # FREE tier
     evaluation_runs_per_ticker: int = 3
 
     @property
