@@ -565,7 +565,18 @@ class GroqRiskSummarizer(RiskSummarizer):
         )
         
         final_response = response.choices[0].message.content
-        final_risks = self._parse_response(final_response)
+        
+        # Parse response - if model returns >5, take top 5
+        try:
+            final_risks = self._parse_response(final_response)
+        except ValueError as e:
+            # If we got more than 5 risks, just take the first 5 (they should be ranked)
+            if "got" in str(e) and "Expected 5" in str(e):
+                print(f"⚠️ Model returned >5 risks in meta-summary, taking first 5")
+                print(f"Raw response from meta-summarization:\n{final_response}\n")
+                final_risks = self._parse_response_flexible(final_response)[:5]
+            else:
+                raise
         
         # Combine all responses for debugging
         combined_raw = f"TWO-PASS SUMMARY\n\n"
@@ -655,6 +666,38 @@ IMPORTANT: Return EXACTLY 5 risks, no more, no less. Do not include any preamble
                 f"Expected 5 risks, got {len(risks)}. "
                 f"Response may not follow expected format."
             )
+        
+        return risks
+    
+    def _parse_response_flexible(self, response: str) -> List[str]:
+        """Parse Groq response into risks without validating count (for fallback).
+        
+        This is used when the model returns more than 5 risks despite instructions.
+        """
+        lines = response.strip().split('\n')
+        risks = []
+        current_risk = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Check if this is a numbered item (1., 2., etc.)
+            if line[0].isdigit() and (line[1] == '.' or line[1] == ')'):
+                # Save previous risk if exists
+                if current_risk:
+                    risks.append(' '.join(current_risk).strip())
+                    current_risk = []
+                # Start new risk (remove number prefix)
+                current_risk.append(line.split('.', 1)[1].strip() if '.' in line else line.split(')', 1)[1].strip())
+            else:
+                # Continue current risk
+                current_risk.append(line)
+        
+        # Add last risk
+        if current_risk:
+            risks.append(' '.join(current_risk).strip())
         
         return risks
 
