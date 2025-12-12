@@ -1,6 +1,8 @@
 # LLM API Keys
 OPENAI_API_KEY=sk-your-openai-key-here
 ANTHROPIC_API_KEY=sk-ant-your-anthropic-key-here
+GROQ_API_KEY=gsk-your-groq-key-here
+HF_TOKEN=hf_your-huggingface-token-here
 
 # Application Config
 APP_NAME="REIT Risk Summarizer"
