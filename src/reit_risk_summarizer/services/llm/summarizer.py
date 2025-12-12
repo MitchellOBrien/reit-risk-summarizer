@@ -574,7 +574,9 @@ class GroqRiskSummarizer(RiskSummarizer):
             if "got" in str(e) and "Expected 5" in str(e):
                 print(f"⚠️ Model returned >5 risks in meta-summary, taking first 5")
                 print(f"Raw response from meta-summarization:\n{final_response}\n")
-                final_risks = self._parse_response_flexible(final_response)[:5]
+                all_parsed = self._parse_response_flexible(final_response)
+                final_risks = all_parsed[:5]
+                print(f"✅ Extracted exactly {len(final_risks)} risks from {len(all_parsed)} total")
             else:
                 raise
         
