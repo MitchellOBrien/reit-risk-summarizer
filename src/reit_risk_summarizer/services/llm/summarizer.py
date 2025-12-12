@@ -410,7 +410,56 @@ class GroqRiskSummarizer(RiskSummarizer):
         ticker: str,
         company_name: str
     ) -> RiskSummary:
-        """Summarize risks using Groq API."""
+        """Summarize risks using Groq API with two-pass chunking if needed."""
+        # Check if we need chunking (roughly 10k tokens = 40k chars)
+        if len(risk_text) > 40000:
+            logger.info(f"Using two-pass summarization for {ticker} ({len(risk_text):,} chars)")
+            return self._summarize_with_chunking(risk_text, ticker, company_name)
+        else:
+            # Single-pass for smaller documents
+            return self._summarize_single_pass(risk_text, ticker, company_name)
+    
+    def _chunk_text(self, text: str, chunk_size: int = 35000) -> List[str]:
+        """
+        Split text into chunks at sentence boundaries.
+        
+        Args:
+            text: Text to chunk
+            chunk_size: Target size per chunk (will adjust to sentence boundaries)
+        
+        Returns:
+            List of text chunks
+        """
+        if len(text) <= chunk_size:
+            return [text]
+        
+        chunks = []
+        start = 0
+        
+        while start < len(text):
+            # Target end point
+            end = min(start + chunk_size, len(text))
+            
+            # If not at the end, find sentence boundary
+            if end < len(text):
+                # Look backwards up to 500 chars for sentence end
+                for i in range(end, max(start, end - 500), -1):
+                    if text[i] in '.!?' and (i + 1 >= len(text) or text[i + 1] in ' \n\t'):
+                        end = i + 1
+                        break
+            
+            chunks.append(text[start:end])
+            start = end
+        
+        return chunks
+    
+    def _summarize_single_pass(
+        self,
+        risk_text: str,
+        ticker: str,
+        company_name: str
+    ) -> RiskSummary:
+        """Single-pass summarization for documents within token limits."""
         import time
         
         max_retries = 3
@@ -469,6 +518,87 @@ class GroqRiskSummarizer(RiskSummarizer):
                 # Other errors (rate limits, API errors, etc.)
                 logger.error(f"Groq API error for {ticker}: {e}")
                 raise LLMError(f"Groq summarization failed: {e}") from e
+    
+    def _summarize_with_chunking(
+        self,
+        risk_text: str,
+        ticker: str,
+        company_name: str
+    ) -> RiskSummary:
+        """
+        Two-pass summarization for large documents.
+        
+        Pass 1: Summarize each chunk → ~5 risks per chunk
+        Pass 2: Meta-summarize all risks → top 5 overall
+        """
+        # Pass 1: Chunk and summarize each
+        chunks = self._chunk_text(risk_text, chunk_size=35000)
+        logger.info(f"Split {ticker} into {len(chunks)} chunks for processing")
+        
+        all_risks = []
+        chunk_responses = []
+        
+        for i, chunk in enumerate(chunks):
+            logger.info(f"Processing chunk {i+1}/{len(chunks)} for {ticker}")
+            
+            # Summarize this chunk
+            chunk_result = self._summarize_single_pass(chunk, ticker, company_name)
+            all_risks.extend(chunk_result.risks)
+            chunk_responses.append(f"Chunk {i+1}: {chunk_result.raw_response}")
+        
+        logger.info(f"Pass 1 complete: Found {len(all_risks)} total risks from {len(chunks)} chunks")
+        
+        # Pass 2: Meta-summarize to top 5
+        meta_prompt = self._build_meta_prompt(all_risks, ticker, company_name)
+        
+        logger.info(f"Pass 2: Meta-summarizing {len(all_risks)} risks to top 5 for {ticker}")
+        
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": self._get_system_prompt()},
+                {"role": "user", "content": meta_prompt}
+            ],
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            timeout=30.0
+        )
+        
+        final_response = response.choices[0].message.content
+        final_risks = self._parse_response(final_response)
+        
+        # Combine all responses for debugging
+        combined_raw = f"TWO-PASS SUMMARY\n\n"
+        combined_raw += "\n\n".join(chunk_responses)
+        combined_raw += f"\n\nFINAL META-SUMMARY:\n{final_response}"
+        
+        return RiskSummary(
+            risks=final_risks,
+            ticker=ticker,
+            company_name=company_name,
+            model=f"{self.model} (2-pass)",
+            prompt_version=self.prompt_version,
+            raw_response=combined_raw
+        )
+    
+    def _build_meta_prompt(self, risks: List[str], ticker: str, company_name: str) -> str:
+        """
+        Build prompt for Pass 2: selecting top 5 from all chunk risks.
+        """
+        risks_text = "\n\n".join([f"{i+1}. {risk}" for i, risk in enumerate(risks)])
+        
+        return f"""Below are {len(risks)} risk factors identified from analyzing {company_name} ({ticker})'s 10-K filing in multiple sections.
+
+Your task: Select the 5 MOST IMPORTANT and MATERIAL risks from this list. Consider:
+- Business impact severity
+- Likelihood of occurrence  
+- Materiality to investors
+- Strategic importance
+
+Identified Risks:
+{risks_text}
+
+Select the top 5 most important risks and format as a numbered list (1-5). Each should be 1-2 sentences."""
     
     def _get_system_prompt(self) -> str:
         """Get system prompt for Groq."""
