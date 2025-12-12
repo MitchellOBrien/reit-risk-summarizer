@@ -589,7 +589,7 @@ class GroqRiskSummarizer(RiskSummarizer):
         
         return f"""Below are {len(risks)} risk factors identified from analyzing {company_name} ({ticker})'s 10-K filing in multiple sections.
 
-Your task: Select the 5 MOST IMPORTANT and MATERIAL risks from this list. Consider:
+Your task: Select EXACTLY 5 MOST IMPORTANT and MATERIAL risks from this list. Consider:
 - Business impact severity
 - Likelihood of occurrence  
 - Materiality to investors
@@ -598,7 +598,14 @@ Your task: Select the 5 MOST IMPORTANT and MATERIAL risks from this list. Consid
 Identified Risks:
 {risks_text}
 
-Select the top 5 most important risks and format as a numbered list (1-5). Each should be 1-2 sentences."""
+Select the top 5 most important risks and format EXACTLY as shown:
+1. [First risk - 1-2 sentences]
+2. [Second risk - 1-2 sentences]
+3. [Third risk - 1-2 sentences]
+4. [Fourth risk - 1-2 sentences]
+5. [Fifth risk - 1-2 sentences]
+
+IMPORTANT: Return EXACTLY 5 risks, no more, no less. Do not include any preamble, explanation, or additional text."""
     
     def _get_system_prompt(self) -> str:
         """Get system prompt for Groq."""
