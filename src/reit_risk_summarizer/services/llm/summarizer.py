@@ -492,7 +492,22 @@ class GroqRiskSummarizer(RiskSummarizer):
                 )
                 
                 raw_response = response.choices[0].message.content
-                risks = self._parse_response(raw_response)
+                
+                # Parse response - handle if model returns != 5 risks
+                try:
+                    risks = self._parse_response(raw_response)
+                except ValueError as e:
+                    if "got" in str(e) and "Expected 5" in str(e):
+                        print(f"⚠️ Model returned wrong number of risks for {ticker}, attempting to fix...")
+                        all_parsed = self._parse_response_flexible(raw_response)
+                        if len(all_parsed) >= 5:
+                            risks = all_parsed[:5]
+                            print(f"✅ Fixed: took first 5 of {len(all_parsed)} risks")
+                        else:
+                            print(f"❌ Only found {len(all_parsed)} risks, cannot proceed")
+                            raise
+                    else:
+                        raise
                 
                 return RiskSummary(
                     risks=risks,
