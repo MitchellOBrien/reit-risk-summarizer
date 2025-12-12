@@ -60,7 +60,6 @@ dmypy.json
 
 # Jupyter Notebooks
 .ipynb_checkpoints/
-*.ipynb
 
 # Data (don't commit cached data)
 data/
