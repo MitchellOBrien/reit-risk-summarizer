@@ -1,7 +1,7 @@
 """LLM-powered risk summarization from extracted 10-K risk factors.
 
 This module provides interfaces and implementations for summarizing REIT risk factors
-using Large Language Models (OpenAI, Anthropic, Groq, Hugging Face). The summarizer 
+using Large Language Models (Groq, Hugging Face). The summarizer 
 identifies the top 5 most material risks from the extracted Item 1A section.
 
 Key Features:
@@ -18,8 +18,6 @@ from dataclasses import dataclass
 from typing import List, Optional
 import logging
 
-from openai import OpenAI, OpenAIError
-from anthropic import Anthropic, AnthropicError
 from groq import Groq
 
 from reit_risk_summarizer.config import get_settings
@@ -130,253 +128,6 @@ class RiskSummarizer(ABC):
             ValueError: If response cannot be parsed into 5 risks
         """
         pass
-
-
-class OpenAIRiskSummarizer(RiskSummarizer):
-    """Risk summarizer using OpenAI models (GPT-4, GPT-4o, etc.)."""
-    
-    def __init__(
-        self,
-        model: str = "gpt-4o",
-        temperature: float = 0.0,
-        max_tokens: int = 2000,
-        prompt_version: str = "v1.0",
-        api_key: Optional[str] = None
-    ):
-        """Initialize OpenAI summarizer.
-        
-        Args:
-            model: OpenAI model (default: gpt-4o)
-            temperature: Sampling temperature
-            max_tokens: Maximum response tokens
-            prompt_version: Prompt template version
-            api_key: OpenAI API key (uses settings.OPENAI_API_KEY if None)
-        """
-        super().__init__(model, temperature, max_tokens, prompt_version)
-        self.client = OpenAI(api_key=api_key or settings.openai_api_key)
-    
-    def summarize(
-        self,
-        risk_text: str,
-        ticker: str,
-        company_name: str
-    ) -> RiskSummary:
-        """Summarize risks using OpenAI API."""
-        try:
-            prompt = self._build_prompt(risk_text, ticker, company_name)
-            
-            logger.info(
-                f"Calling OpenAI {self.model} for {ticker} "
-                f"(prompt v{self.prompt_version})"
-            )
-            
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": self._get_system_prompt()
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                temperature=self.temperature,
-                max_tokens=self.max_tokens
-            )
-            
-            raw_response = response.choices[0].message.content
-            risks = self._parse_response(raw_response)
-            
-            return RiskSummary(
-                risks=risks,
-                ticker=ticker,
-                company_name=company_name,
-                model=self.model,
-                prompt_version=self.prompt_version,
-                raw_response=raw_response
-            )
-            
-        except OpenAIError as e:
-            logger.error(f"OpenAI API error for {ticker}: {e}")
-            raise LLMError(f"OpenAI summarization failed: {e}") from e
-        except ValueError as e:
-            logger.error(f"Failed to parse OpenAI response for {ticker}: {e}")
-            raise LLMError(f"Response parsing failed: {e}") from e
-    
-    def _get_system_prompt(self) -> str:
-        """Get system prompt for OpenAI."""
-        if self.prompt_version == "v1.0":
-            return v1_0.SYSTEM_PROMPT
-        else:
-            # Fallback for unknown versions
-            return v1_0.SYSTEM_PROMPT
-    
-    def _build_prompt(self, risk_text: str, ticker: str, company_name: str) -> str:
-        """Build user prompt for OpenAI."""
-        if self.prompt_version == "v1.0":
-            return v1_0.build_user_prompt(risk_text, ticker, company_name)
-        else:
-            # Fallback for unknown versions
-            return v1_0.build_user_prompt(risk_text, ticker, company_name)
-    
-    def _parse_response(self, response: str) -> List[str]:
-        """Parse OpenAI response into 5 risks."""
-        lines = response.strip().split('\n')
-        risks = []
-        current_risk = []
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            
-            # Check if this is a numbered item (1., 2., etc.)
-            if line[0].isdigit() and (line[1] == '.' or line[1] == ')'):
-                # Save previous risk if exists
-                if current_risk:
-                    risks.append(' '.join(current_risk).strip())
-                    current_risk = []
-                # Start new risk (remove number prefix)
-                current_risk.append(line.split('.', 1)[1].strip() if '.' in line else line.split(')', 1)[1].strip())
-            else:
-                # Continue current risk
-                current_risk.append(line)
-        
-        # Add last risk
-        if current_risk:
-            risks.append(' '.join(current_risk).strip())
-        
-        if len(risks) != 5:
-            raise ValueError(
-                f"Expected 5 risks, got {len(risks)}. "
-                f"Response may not follow expected format."
-            )
-        
-        return risks
-
-
-class AnthropicRiskSummarizer(RiskSummarizer):
-    """Risk summarizer using Anthropic models (Claude)."""
-    
-    def __init__(
-        self,
-        model: str = "claude-3-5-sonnet-20241022",
-        temperature: float = 0.0,
-        max_tokens: int = 2000,
-        prompt_version: str = "v1.0",
-        api_key: Optional[str] = None
-    ):
-        """Initialize Anthropic summarizer.
-        
-        Args:
-            model: Anthropic model (default: claude-3-5-sonnet-20241022)
-            temperature: Sampling temperature
-            max_tokens: Maximum response tokens
-            prompt_version: Prompt template version
-            api_key: Anthropic API key (uses settings.ANTHROPIC_API_KEY if None)
-        """
-        super().__init__(model, temperature, max_tokens, prompt_version)
-        self.client = Anthropic(api_key=api_key or settings.anthropic_api_key)
-    
-    def summarize(
-        self,
-        risk_text: str,
-        ticker: str,
-        company_name: str
-    ) -> RiskSummary:
-        """Summarize risks using Anthropic API."""
-        try:
-            prompt = self._build_prompt(risk_text, ticker, company_name)
-            
-            logger.info(
-                f"Calling Anthropic {self.model} for {ticker} "
-                f"(prompt v{self.prompt_version})"
-            )
-            
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                temperature=self.temperature,
-                system=self._get_system_prompt(),
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ]
-            )
-            
-            raw_response = response.content[0].text
-            risks = self._parse_response(raw_response)
-            
-            return RiskSummary(
-                risks=risks,
-                ticker=ticker,
-                company_name=company_name,
-                model=self.model,
-                prompt_version=self.prompt_version,
-                raw_response=raw_response
-            )
-            
-        except AnthropicError as e:
-            logger.error(f"Anthropic API error for {ticker}: {e}")
-            raise LLMError(f"Anthropic summarization failed: {e}") from e
-        except ValueError as e:
-            logger.error(f"Failed to parse Anthropic response for {ticker}: {e}")
-            raise LLMError(f"Response parsing failed: {e}") from e
-    
-    def _get_system_prompt(self) -> str:
-        """Get system prompt for Anthropic."""
-        if self.prompt_version == "v1.0":
-            return v1_0.SYSTEM_PROMPT
-        else:
-            # Fallback for unknown versions
-            return v1_0.SYSTEM_PROMPT
-    
-    def _build_prompt(self, risk_text: str, ticker: str, company_name: str) -> str:
-        """Build user prompt for Anthropic."""
-        if self.prompt_version == "v1.0":
-            return v1_0.build_user_prompt(risk_text, ticker, company_name)
-        else:
-            # Fallback for unknown versions
-            return v1_0.build_user_prompt(risk_text, ticker, company_name)
-    
-    def _parse_response(self, response: str) -> List[str]:
-        """Parse Anthropic response into 5 risks (same logic as OpenAI)."""
-        lines = response.strip().split('\n')
-        risks = []
-        current_risk = []
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            
-            # Check if this is a numbered item (1., 2., etc.)
-            if line[0].isdigit() and (line[1] == '.' or line[1] == ')'):
-                # Save previous risk if exists
-                if current_risk:
-                    risks.append(' '.join(current_risk).strip())
-                    current_risk = []
-                # Start new risk (remove number prefix)
-                current_risk.append(line.split('.', 1)[1].strip() if '.' in line else line.split(')', 1)[1].strip())
-            else:
-                # Continue current risk
-                current_risk.append(line)
-        
-        # Add last risk
-        if current_risk:
-            risks.append(' '.join(current_risk).strip())
-        
-        if len(risks) != 5:
-            raise ValueError(
-                f"Expected 5 risks, got {len(risks)}. "
-                f"Response may not follow expected format."
-            )
-        
-        return risks
 
 
 class GroqRiskSummarizer(RiskSummarizer):
@@ -612,6 +363,14 @@ class GroqRiskSummarizer(RiskSummarizer):
     def _build_meta_prompt(self, risks: List[str], ticker: str, company_name: str) -> str:
         """
         Build prompt for Pass 2: selecting top 5 from all chunk risks.
+        
+        TODO: The model (Llama 3.3-70B) sometimes returns 6 risks despite explicit
+        instructions to return exactly 5. We've added post-processing fallback logic
+        to handle this, but should revisit to find a better solution:
+        - Try different prompt engineering approaches (JSON mode, XML formatting, etc.)
+        - Test if other models (Qwen, Mixtral) follow count instructions better
+        - Consider using structured output APIs if/when available on Groq
+        - Evaluate if temperature adjustments help with adherence to constraints
         """
         risks_text = "\n\n".join([f"{i+1}. {risk}" for i, risk in enumerate(risks)])
         
@@ -955,14 +714,14 @@ Top 5 Risks:
 
 
 def create_summarizer(
-    provider: str = "huggingface",
+    provider: str = "groq",
     model: Optional[str] = None,
     **kwargs
 ) -> RiskSummarizer:
     """Factory function to create a risk summarizer.
     
     Args:
-        provider: LLM provider ("openai", "anthropic", "groq", or "huggingface")
+        provider: LLM provider ("groq" or "huggingface")
         model: Model name (uses provider default if None)
         **kwargs: Additional arguments passed to summarizer constructor
         
@@ -973,22 +732,13 @@ def create_summarizer(
         ValueError: If provider is unsupported
         
     Examples:
+        >>> summarizer = create_summarizer("groq")  # Free Llama 3.3 70B (default)
         >>> summarizer = create_summarizer("huggingface")  # LOCAL, no API needed
-        >>> summarizer = create_summarizer("openai")
-        >>> summarizer = create_summarizer("anthropic", model="claude-3-opus-20240229")
-        >>> summarizer = create_summarizer("groq")  # Free Llama 3.3 70B
         >>> summarizer = create_summarizer("huggingface", model="meta-llama/Llama-3.2-1B-Instruct")
     """
     provider = provider.lower()
     
-    if provider == "openai":
-        return OpenAIRiskSummarizer(model=model or "gpt-4o", **kwargs)
-    elif provider == "anthropic":
-        return AnthropicRiskSummarizer(
-            model=model or "claude-3-5-sonnet-20241022",
-            **kwargs
-        )
-    elif provider == "groq":
+    if provider == "groq":
         return GroqRiskSummarizer(
             model=model or "llama-3.3-70b-versatile",
             **kwargs
@@ -1001,5 +751,5 @@ def create_summarizer(
     else:
         raise ValueError(
             f"Unsupported provider: {provider}. "
-            f"Supported providers: 'openai', 'anthropic', 'groq', 'huggingface'"
+            f"Supported providers: 'groq', 'huggingface'"
         )

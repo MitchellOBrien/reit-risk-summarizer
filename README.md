@@ -26,6 +26,7 @@ This system helps financial advisors quickly understand REIT investment risks by
 - 📊 **Automated Quality Metrics** - Semantic similarity, NDCG@5, sector-specificity scoring
 - 🔄 **Full ML Lifecycle** - Dev → Testing → Prod → Monitoring
 - 📈 **LLM-as-Judge** - Sophisticated quality evaluation (Phase 2)
+- 🧩 **Intelligent Chunking** - Automatic two-pass summarization for large documents (>40K chars)
 
 ### For Software Engineers  
 - 🚀 **Production-Ready FastAPI** - Clean architecture, proper error handling
@@ -56,8 +57,8 @@ reit-risk-summarizer/
 │   │   ├── sec/                        # SEC data handling
 │   │   │   ├── fetcher.py             # Fetch 10-K filings from EDGAR
 │   │   │   └── extractor.py           # Extract Item 1A risk sections
-│   │   ├── llm/                       # LLM integration
-│   │   │   ├── summarizer.py          # Risk summarization logic
+│   │   ├── llm/                       # LLM integration (Groq + HuggingFace)
+│   │   │   ├── summarizer.py          # Risk summarization with two-pass chunking
 │   │   │   └── prompts/               # Versioned prompt templates
 │   │   │       └── v1_0.py
 │   │   ├── orchestrator.py            # Pipeline coordination
@@ -114,7 +115,8 @@ reit-risk-summarizer/
 
 - **Python 3.11+** (Python 3.13 recommended)
 - **[uv](https://github.com/astral-sh/uv)** - Fast Python package manager
-- **OpenAI or Anthropic API key** (for LLM)
+- **Groq API key** (free tier available - for cloud LLM)
+  - OR **Hugging Face** (for local/offline LLM - no API key needed)
 
 ### Installation
 
@@ -140,9 +142,12 @@ source .venv/bin/activate
 
 # 5. Set up environment variables
 cp .env.example .env
-# Edit .env and add your API keys:
-# - OPENAI_API_KEY=sk-...
-# - ANTHROPIC_API_KEY=sk-ant-...
+# Edit .env and add your Groq API key:
+# - GROQ_API_KEY=gsk_...
+# (Get free API key at https://console.groq.com/)
+#
+# OR use local HuggingFace models (no API key needed):
+# - Set DEFAULT_LLM_PROVIDER=huggingface
 ```
 
 ### Running the Application
@@ -354,22 +359,28 @@ External APIs (SEC EDGAR, OpenAI/Anthropic)
 
 ### Key Design Patterns
 
-**1. Repository Pattern** (Future)
+**1. Two-Pass Chunking for Large Documents**
+- Automatically handles documents >40K characters (exceeding API token limits)
+- **Pass 1**: Split at sentence boundaries (35K chunks) → 5 risks per chunk
+- **Pass 2**: Meta-summarize all chunk risks → select top 5 overall
+- Benefits: 100% document coverage, no information loss, handles any size
+
+**2. Repository Pattern** (Future)
 - Clean abstraction over data access
 - Easy to mock for testing
 - Swap databases without changing business logic
 
-**2. Dependency Injection**
+**3. Dependency Injection**
 - Services injected via FastAPI's `Depends()`
 - Makes testing easier
 - Loose coupling between components
 
-**3. Pipeline/ETL Pattern**
+**4. Pipeline/ETL Pattern**
 - Clear data flow: Fetch → Extract → Summarize
 - Each step can be tested independently
 - Easy to add new steps (e.g., validation)
 
-**4. Evaluation-Driven Development**
+**5. Evaluation-Driven Development**
 - Golden dataset defines "good"
 - Metrics guide iteration
 - Automated quality gates
@@ -464,7 +475,8 @@ gcloud run deploy reit-risk-summarizer \
   --region us-central1 \
   --allow-unauthenticated \
   --set-env-vars ENVIRONMENT=production \
-  --set-env-vars OPENAI_API_KEY=your-key \
+  --set-env-vars GROQ_API_KEY=your-key \
+  --set-env-vars DEFAULT_LLM_PROVIDER=groq \
   --set-env-vars CACHE_TYPE=memory \
   --memory 2Gi \
   --cpu 2 \
@@ -512,13 +524,13 @@ gcloud run deploy reit-risk-summarizer \
 
 ```bash
 # 1. Store API keys in Secret Manager
-echo -n "your-openai-key" | gcloud secrets create openai-api-key \
+echo -n "your-groq-key" | gcloud secrets create groq-api-key \
   --data-file=-
 
 # 2. Deploy with secrets
 gcloud run deploy reit-risk-summarizer \
   --image gcr.io/YOUR_PROJECT_ID/reit-risk-summarizer \
-  --update-secrets OPENAI_API_KEY=openai-api-key:latest \
+  --update-secrets GROQ_API_KEY=groq-api-key:latest \
   ... # other flags
 ```
 
@@ -596,10 +608,19 @@ All settings via environment variables (`.env`):
 
 ```bash
 # LLM Configuration
-OPENAI_API_KEY=sk-...
-DEFAULT_LLM_MODEL=gpt-4
-LLM_TEMPERATURE=0.3          # Lower = more consistent
-LLM_MAX_TOKENS=2000
+# Option 1: Groq (cloud, fast, FREE tier)
+GROQ_API_KEY=gsk_...                    # Get at https://console.groq.com/
+DEFAULT_LLM_PROVIDER=groq               # or 'huggingface'
+DEFAULT_LLM_MODEL=llama-3.3-70b-versatile  # Groq models: llama-3.3-70b-versatile, qwen2.5-72b-versatile, mixtral-8x7b-32768
+
+# Option 2: HuggingFace (local, offline, no API needed)
+DEFAULT_LLM_PROVIDER=huggingface
+DEFAULT_LLM_MODEL=meta-llama/Llama-3.2-1B-Instruct  # Or any HF model
+HF_TOKEN=hf_...                         # Optional, only for gated models
+
+# Common settings
+LLM_TEMPERATURE=0.0          # Lower = more consistent (0.0 = deterministic)
+LLM_MAX_TOKENS=2000          # Max response tokens (300 for HuggingFace)
 
 # Caching
 CACHE_ENABLED=true
