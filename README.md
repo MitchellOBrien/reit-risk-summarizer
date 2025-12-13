@@ -253,50 +253,134 @@ ruff check . && ruff format --check . && mypy src/
 
 ## 📡 API Documentation
 
+### Base URL
+```
+http://localhost:8000
+```
+
+### Interactive Documentation
+- **Swagger UI**: http://localhost:8000/docs (Try endpoints in browser)
+- **ReDoc**: http://localhost:8000/redoc (Beautiful API reference)
+
+---
+
 ### Endpoints
 
-#### `GET /risks/{ticker}`
-Get top 5 risk summaries for a REIT.
+#### 1. `GET /api/v1/risks/{ticker}`
 
-**Parameters:**
-- `ticker` (path) - Stock ticker symbol (e.g., PLD, AMT, EQIX)
-- `force_refresh` (query, optional) - Force refresh cached results
+Get top 5 material risks for a REIT by processing its latest 10-K filing.
 
-**Response:**
+**Path Parameters:**
+| Parameter | Type | Required | Description | Example |
+|-----------|------|----------|-------------|---------|
+| `ticker` | string | Yes | Stock ticker symbol (1-10 chars) | `AMT`, `PLD`, `EQIX` |
+
+**Query Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `force_refresh` | boolean | No | `false` | Bypass cache and fetch fresh data |
+| `model` | string | No | `llama-3.3-70b-versatile` | Override default LLM model |
+
+**Success Response (200 OK):**
 ```json
 {
-  "ticker": "PLD",
-  "company_name": "Prologis",
+  "ticker": "AMT",
+  "company_name": "American Tower Corporation",
   "risks": [
-    {
-      "rank": 1,
-      "title": "California Market Exposure",
-      "description": "Nearly one-third of properties and revenues come from California markets. Economic downturn, oversupply, or unfavorable tax changes in the state would significantly hurt performance.",
-      "category": "Geographic Concentration"
-    },
-    {
-      "rank": 2,
-      "title": "Major Customer Dependency",
-      "description": "Amazon alone represents 6.4% of revenues, and top 10 customers account for 16%. Loss of key tenants or unfavorable lease renewals would materially impact cash flow.",
-      "category": "Customer Concentration"
-    },
-    ...
+    "Significant exposure to technological disruption in telecommunications infrastructure...",
+    "Heavy debt burden with $40B+ in long-term obligations creating refinancing risk...",
+    "Geographic concentration with 40% of revenue from U.S. market...",
+    "Regulatory uncertainty across multiple international jurisdictions...",
+    "Tenant concentration with major wireless carriers representing 75% of revenue..."
   ],
-  "metadata": {
-    "filing_date": "2023-12-31",
-    "processing_time_ms": 4250,
-    "model": "gpt-4",
-    "prompt_version": "v1.0",
-    "cached": false,
-    "timestamp": "2024-01-15T10:30:00Z"
-  }
+  "model": "llama-3.3-70b-versatile",
+  "prompt_version": "v1.0",
+  "cached": false
 }
 ```
 
-#### `GET /health`
-Health check endpoint.
+**Error Responses:**
 
-**Response:**
+| Status Code | Description | Example Response |
+|------------|-------------|------------------|
+| 404 | Ticker not found or no 10-K available | `{"detail": "Could not fetch 10-K filing for XYZ..."}` |
+| 500 | Risk extraction failed | `{"detail": "Failed to extract risk factors..."}` |
+| 503 | LLM service unavailable | `{"detail": "LLM service unavailable. Please try again later."}` |
+
+**Examples:**
+
+```bash
+# Basic request
+curl http://localhost:8000/api/v1/risks/AMT
+
+# Force refresh (bypass cache)
+curl http://localhost:8000/api/v1/risks/AMT?force_refresh=true
+
+# Override model
+curl http://localhost:8000/api/v1/risks/PLD?model=llama-3.1-70b-versatile
+```
+
+**Python Example:**
+```python
+import requests
+
+response = requests.get("http://localhost:8000/api/v1/risks/AMT")
+data = response.json()
+
+print(f"{data['company_name']} - Top 5 Risks:")
+for i, risk in enumerate(data['risks'], 1):
+    print(f"{i}. {risk[:100]}...")  # First 100 chars
+```
+
+---
+
+#### 2. `DELETE /api/v1/risks/cache/{ticker}`
+
+Clear cached data (10-K HTML and extracted risks) for a specific ticker.
+
+**Path Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `ticker` | string | Yes | Stock ticker to clear cache for |
+
+**Success Response (204 No Content):**
+```
+(Empty response body)
+```
+
+**Example:**
+```bash
+# Clear cache for AMT
+curl -X DELETE http://localhost:8000/api/v1/risks/cache/AMT
+
+# Next request will fetch fresh data
+curl http://localhost:8000/api/v1/risks/AMT
+```
+
+---
+
+#### 3. `DELETE /api/v1/risks/cache`
+
+Clear all cached data for all tickers.
+
+**Success Response (204 No Content):**
+```
+(Empty response body)
+```
+
+**Example:**
+```bash
+# Clear entire cache
+curl -X DELETE http://localhost:8000/api/v1/risks/cache
+```
+
+---
+
+#### 4. `GET /health`
+
+Health check endpoint for monitoring.
+
+**Success Response (200 OK):**
 ```json
 {
   "status": "healthy",
@@ -305,6 +389,46 @@ Health check endpoint.
   "timestamp": "2024-01-15T10:30:00Z"
 }
 ```
+
+**Example:**
+```bash
+curl http://localhost:8000/health
+```
+
+---
+
+### Caching Behavior
+
+The API caches two things to improve performance:
+
+1. **10-K HTML** (key: `{ticker}_10k_html`)
+   - Raw HTML from SEC EDGAR
+   - Cached after first fetch
+   - Bypass with `?force_refresh=true`
+
+2. **Extracted Risk Text** (key: `{ticker}_risk_text`)
+   - Item 1A section parsed from HTML
+   - Cached after first extraction
+   - Bypass with `?force_refresh=true`
+
+**Not cached:** LLM summaries (depend on model parameters)
+
+**Cache persistence:** In-memory (cleared on server restart)
+
+**Typical performance:**
+- First request: 8-15 seconds (fetch + extract + summarize)
+- Cached request: 2-5 seconds (only summarize)
+- Cache speedup: ~3-5x faster
+
+---
+
+### Rate Limits
+
+**Groq Free Tier:**
+- 30 requests/minute
+- 14,400 tokens/minute
+
+**Recommended:** Add caching and rate limiting middleware for production use.
 
 ---
 

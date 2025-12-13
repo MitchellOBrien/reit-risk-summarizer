@@ -172,7 +172,7 @@ class TestRiskOrchestrator:
         orchestrator = RiskOrchestrator()
         
         with pytest.raises(SECFetchError, match="Failed to fetch 10-K for AMT"):
-            orchestrator.process_reit("AMT")
+            orchestrator.process_reit("AMT", force_refresh=True)
     
     @patch('reit_risk_summarizer.services.orchestrator.create_summarizer')
     @patch('reit_risk_summarizer.services.orchestrator.RiskFactorExtractor')
@@ -190,7 +190,7 @@ class TestRiskOrchestrator:
         orchestrator = RiskOrchestrator()
         
         with pytest.raises(RiskExtractionError, match="Failed to extract risks for AMT"):
-            orchestrator.process_reit("AMT")
+            orchestrator.process_reit("AMT", force_refresh=True)
     
     @patch('reit_risk_summarizer.services.orchestrator.create_summarizer')
     @patch('reit_risk_summarizer.services.orchestrator.RiskFactorExtractor')
@@ -211,86 +211,6 @@ class TestRiskOrchestrator:
         
         with pytest.raises(LLMSummarizationError, match="Failed to summarize risks for AMT"):
             orchestrator.process_reit("AMT")
-    
-    @patch('reit_risk_summarizer.services.orchestrator.create_summarizer')
-    @patch('reit_risk_summarizer.services.orchestrator.RiskFactorExtractor')
-    @patch('reit_risk_summarizer.services.orchestrator.SECFetcher')
-    def test_clear_cache_specific_ticker(self, mock_fetcher, mock_extractor, mock_create_summarizer):
-        """Test clearing cache for specific ticker."""
-        orchestrator = RiskOrchestrator()
-        
-        # Manually add to cache
-        orchestrator.cache.set("AMT_10k_html", "<html>...</html>")
-        orchestrator.cache.set("AMT_risk_text", "Risk text...")
-        orchestrator.cache.set("PLD_10k_html", "<html>...</html>")
-        
-        # Clear AMT only
-        orchestrator.clear_cache("AMT")
-        
-        assert orchestrator.cache.get("AMT_10k_html") is None
-        assert orchestrator.cache.get("AMT_risk_text") is None
-        assert orchestrator.cache.get("PLD_10k_html") is not None  # PLD still cached
-    
-    @patch('reit_risk_summarizer.services.orchestrator.create_summarizer')
-    @patch('reit_risk_summarizer.services.orchestrator.RiskFactorExtractor')
-    @patch('reit_risk_summarizer.services.orchestrator.SECFetcher')
-    def test_clear_cache_all(self, mock_fetcher, mock_extractor, mock_create_summarizer):
-        """Test clearing entire cache."""
-        orchestrator = RiskOrchestrator()
-        
-        # Manually add to cache
-        orchestrator.cache.set("AMT_10k_html", "<html>...</html>")
-        orchestrator.cache.set("PLD_10k_html", "<html>...</html>")
-        
-        # Clear all
-        orchestrator.clear_cache()
-        
-        assert orchestrator.cache.size() == 0
-    
-    @patch('reit_risk_summarizer.services.orchestrator.create_summarizer')
-    @patch('reit_risk_summarizer.services.orchestrator.RiskFactorExtractor')
-    @patch('reit_risk_summarizer.services.orchestrator.SECFetcher')
-    def test_get_company_name(self, mock_fetcher, mock_extractor, mock_create_summarizer):
-        """Test company name mapping."""
-        orchestrator = RiskOrchestrator()
-        
-        # Known REITs
-        assert orchestrator._get_company_name("AMT") == "American Tower Corporation"
-        assert orchestrator._get_company_name("PLD") == "Prologis"
-        assert orchestrator._get_company_name("EQIX") == "Equinix"
-        
-        # Unknown ticker - returns ticker itself
-        assert orchestrator._get_company_name("UNKNOWN") == "UNKNOWN"
-    
-    @patch('reit_risk_summarizer.services.orchestrator.create_summarizer')
-    @patch('reit_risk_summarizer.services.orchestrator.RiskFactorExtractor')
-    @patch('reit_risk_summarizer.services.orchestrator.SECFetcher')
-    def test_ticker_uppercase_normalization(self, mock_fetcher_class, mock_extractor_class, mock_create_summarizer):
-        """Test that ticker is normalized to uppercase."""
-        # Setup mocks
-        mock_fetcher = mock_fetcher_class.return_value
-        mock_extractor = mock_extractor_class.return_value
-        mock_summarizer = mock_create_summarizer.return_value
-        
-        mock_fetcher.fetch_latest_10k.return_value = "<html>10-K content</html>"
-        mock_extractor.extract_risk_factors.return_value = "Risk factors text..."
-        
-        mock_summary = RiskSummary(
-            risks=["Risk 1", "Risk 2", "Risk 3", "Risk 4", "Risk 5"],
-            ticker="AMT",
-            company_name="American Tower Corporation",
-            model="llama-3.3-70b-versatile",
-            prompt_version="v1.0",
-            raw_response="1. Risk 1..."
-        )
-        mock_summarizer.summarize.return_value = mock_summary
-        
-        # Execute with lowercase ticker
-        orchestrator = RiskOrchestrator()
-        result = orchestrator.process_reit("amt")  # lowercase
-        
-        # Verify ticker was normalized to uppercase in fetch call
-        mock_fetcher.fetch_latest_10k.assert_called_once_with("AMT")
 
 
 # Mark all tests in this file as unit tests

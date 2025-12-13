@@ -11,7 +11,7 @@ import time
 from typing import Optional
 
 from ..exceptions import SECFetchError, RiskExtractionError, LLMSummarizationError
-from .cache import MemoryCache
+from .cache import MemoryCache, get_cache
 from .sec.fetcher import SECFetcher
 from .sec.extractor import RiskFactorExtractor
 from .llm.summarizer import create_summarizer, RiskSummary
@@ -58,7 +58,8 @@ class RiskOrchestrator:
             model=summarizer_model
         )
         self.cache_enabled = cache_enabled
-        self.cache = cache or MemoryCache()
+        # Use provided cache, or global singleton, or create new instance
+        self.cache = cache or get_cache()
         
         logger.info(
             f"Initialized RiskOrchestrator "
@@ -96,12 +97,15 @@ class RiskOrchestrator:
         
         try:
             # Step 1: Fetch 10-K HTML
+            logger.info(f"Step 1/3: Fetching 10-K filing for {ticker}...")
             html = self._fetch_10k(ticker, force_refresh)
             
             # Step 2: Extract risk factors
+            logger.info(f"Step 2/3: Extracting risk factors for {ticker}...")
             risk_text = self._extract_risks(ticker, html, force_refresh)
             
             # Step 3: Summarize to top 5 risks
+            logger.info(f"Step 3/3: Summarizing risks for {ticker}...")
             summary = self._summarize_risks(ticker, risk_text)
             
             # Add processing time metadata
