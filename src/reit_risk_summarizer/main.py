@@ -40,6 +40,10 @@ app.add_middleware(
 )
 
 # Add trusted host middleware (security)
+# TODO: Update allowed_hosts before production deployment
+#   Development: ["localhost", "127.0.0.1", "localhost:8000", "127.0.0.1:8000"]
+#   Production: ["reit-risk-summarizer-xxxxx.run.app"] (replace with actual Cloud Run URL)
+#   Current config ["*"] accepts ANY host - insecure but OK for development
 if settings.environment == "production":
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
 
@@ -47,7 +51,7 @@ if settings.environment == "production":
 app.middleware("http")(logging_middleware)
 app.middleware("http")(error_handling_middleware)
 
-# Include routers
+# Include routers. Routers have the endpoints which define the functionality. Endpoints are for get, delete, etc.
 app.include_router(health.router)
 app.include_router(risks.router)
 
