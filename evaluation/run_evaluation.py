@@ -1,184 +1,277 @@
-#!/usr/bin/env python3
-"""CLI script to run evaluation of risk summaries against golden dataset.
+"""Run evaluation against golden dataset.
+
+This script processes REITs from the golden dataset and generates
+risk summaries, using cached LLM outputs when available to avoid
+burning API tokens.
 
 Usage:
-    python -m evaluation.run_evaluation --ticker PLD
-    python -m evaluation.run_evaluation --all
-    python -m evaluation.run_evaluation --sector industrial
+    # Process all tickers in golden dataset
+    python -m evaluation.run_evaluation
+    
+    # Process specific tickers
+    python -m evaluation.run_evaluation --tickers AMT PLD
+    
+    # Force regenerate (ignore cached outputs)
+    python -m evaluation.run_evaluation --regenerate
+    
+    # Use cached outputs only (fail if not cached)
+    python -m evaluation.run_evaluation --cached-only
 """
 
 import argparse
+import csv
 import json
+import logging
 import sys
+from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from reit_risk_summarizer.services.orchestrator import RiskOrchestrator
+from reit_risk_summarizer.exceptions import (
+    SECFetchError,
+    RiskExtractionError,
+    LLMSummarizationError
+)
+from evaluation.golden_output_manager import GoldenOutputManager
 
-from evaluation.evaluator import EvaluationResult, Evaluator
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
-def print_results(results: list[EvaluationResult], show_details: bool = True) -> None:
-    """Pretty print evaluation results.
-
+def load_golden_dataset(dataset_path: Optional[Path] = None) -> list[dict]:
+    """Load golden dataset CSV.
+    
     Args:
-        results: List of evaluation results
-        show_details: Whether to show per-REIT details
-    """
-    if not results:
-        print("No results to display.")
-        return
-
-    # Print header
-    print("\n" + "=" * 80)
-    print("EVALUATION RESULTS")
-    print("=" * 80 + "\n")
-
-    # Print individual results
-    if show_details:
-        for result in results:
-            print(f"📊 {result.ticker} - {result.company_name}")
-            print(f"   Sector: {result.sector}")
-            print(f"   Semantic Similarity: {result.semantic_similarity:.3f}")
-            print(f"   NDCG@5: {result.ndcg_at_5:.3f}")
-            print(f"   Sector Specificity: {result.sector_specificity:.3f}")
-            print()
-
-    # Calculate and print aggregate metrics
-    evaluator = Evaluator(Path(__file__).parent / "golden_dataset.csv")
-    aggregate = evaluator.get_aggregate_metrics(results)
-
-    print("-" * 80)
-    print("AGGREGATE METRICS")
-    print("-" * 80)
-    print(f"Number of REITs evaluated: {aggregate['num_evaluated']}")
-    print(f"Mean Semantic Similarity: {aggregate['mean_semantic_similarity']:.3f}")
-    print(f"Mean NDCG@5: {aggregate['mean_ndcg_at_5']:.3f}")
-    print(f"Mean Sector Specificity: {aggregate['mean_sector_specificity']:.3f}")
-    print()
-
-    # Sector breakdown
-    sector_breakdown = evaluator.get_sector_breakdown(results)
-    if len(sector_breakdown) > 1:
-        print("-" * 80)
-        print("SECTOR BREAKDOWN")
-        print("-" * 80)
-        for sector, metrics in sector_breakdown.items():
-            print(f"\n{sector.upper()}")
-            print(f"  REITs: {metrics['num_evaluated']}")
-            print(f"  Semantic Similarity: {metrics['mean_semantic_similarity']:.3f}")
-            print(f"  NDCG@5: {metrics['mean_ndcg_at_5']:.3f}")
-            print(f"  Sector Specificity: {metrics['mean_sector_specificity']:.3f}")
-        print()
-
-
-def run_evaluation_for_ticker(ticker: str) -> EvaluationResult:
-    """Run evaluation for a single ticker.
-
-    This is a placeholder - in production, this would:
-    1. Fetch the 10-K filing
-    2. Extract risk factors
-    3. Run LLM summarization
-    4. Evaluate against golden dataset
-
-    Args:
-        ticker: REIT ticker symbol
-
+        dataset_path: Path to golden dataset CSV. 
+                     Defaults to reit-risk-golden-dataset.csv in project root.
+    
     Returns:
-        EvaluationResult
+        List of dicts with ticker, company_name, sector, and expert risks
     """
-    # TODO: Implement full pipeline
-    # For now, this is a stub that would integrate with:
-    # - src/reit_risk_summarizer/services/sec/fetcher.py
-    # - src/reit_risk_summarizer/services/sec/extractor.py
-    # - src/reit_risk_summarizer/services/llm/summarizer.py
+    if dataset_path is None:
+        # Default to project root
+        dataset_path = Path(__file__).parent.parent / "reit-risk-golden-dataset.csv"
+    
+    if not dataset_path.exists():
+        raise FileNotFoundError(f"Golden dataset not found at {dataset_path}")
+    
+    tickers = []
+    with open(dataset_path, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            # Extract the 5 expert-labeled risks
+            expert_risks = [
+                row.get(f"risk_{i}", "").strip()
+                for i in range(1, 6)
+                if row.get(f"risk_{i}", "").strip()
+            ]
+            
+            tickers.append({
+                "ticker": row["ticker"].strip(),
+                "company_name": row.get("company_name", "").strip(),
+                "sector": row.get("sector", "").strip(),
+                "expert_risks": expert_risks
+            })
+    
+    logger.info(f"Loaded {len(tickers)} tickers from golden dataset")
+    return tickers
 
-    raise NotImplementedError(
-        "Full pipeline integration not yet implemented. "
-        "This script currently serves as a template for future integration."
-    )
+
+def process_ticker(
+    ticker: str,
+    orchestrator: RiskOrchestrator,
+    golden_manager: GoldenOutputManager,
+    use_cached: bool = True,
+    regenerate: bool = False
+) -> Optional[dict]:
+    """Process a single ticker and return results.
+    
+    Args:
+        ticker: Stock ticker symbol
+        orchestrator: RiskOrchestrator instance
+        golden_manager: GoldenOutputManager instance
+        use_cached: If True, use cached golden output if available
+        regenerate: If True, ignore cache and regenerate
+    
+    Returns:
+        Dict with ticker, generated risks, and metadata, or None if failed
+    """
+    logger.info(f"\n{'='*60}")
+    logger.info(f"Processing {ticker}")
+    logger.info(f"{'='*60}")
+    
+    # Check for cached golden output
+    if use_cached and not regenerate:
+        cached_summary = golden_manager.load_cached_output(ticker)
+        if cached_summary:
+            logger.info(f"✓ Using cached golden output for {ticker}")
+            return {
+                "ticker": ticker,
+                "company_name": cached_summary.company_name,
+                "risks": cached_summary.risks,
+                "model": cached_summary.model,
+                "prompt_version": cached_summary.prompt_version,
+                "source": "cached_golden_output",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+    
+    # Generate new output
+    try:
+        logger.info(f"Generating new output for {ticker} (calling Groq API)...")
+        summary = orchestrator.process_reit(ticker, force_refresh=False)
+        
+        # Save to golden outputs cache
+        golden_manager.save_output(summary)
+        
+        logger.info(f"✓ Successfully processed {ticker}")
+        return {
+            "ticker": ticker,
+            "company_name": summary.company_name,
+            "risks": summary.risks,
+            "model": summary.model,
+            "prompt_version": summary.prompt_version,
+            "source": "groq_api",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    
+    except SECFetchError as e:
+        logger.error(f"✗ Failed to fetch SEC data for {ticker}: {e}")
+        return None
+    
+    except RiskExtractionError as e:
+        logger.error(f"✗ Failed to extract risks for {ticker}: {e}")
+        return None
+    
+    except LLMSummarizationError as e:
+        logger.error(f"✗ Failed to generate summary for {ticker}: {e}")
+        return None
+    
+    except Exception as e:
+        logger.error(f"✗ Unexpected error processing {ticker}: {e}", exc_info=True)
+        return None
 
 
 def main():
-    """Main CLI entry point."""
+    """Run evaluation on golden dataset."""
     parser = argparse.ArgumentParser(
-        description="Evaluate REIT risk summaries against golden dataset"
+        description="Evaluate LLM risk summarization against golden dataset"
     )
-
-    # Mutually exclusive group for ticker selection
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--ticker", type=str, help="Evaluate a single ticker (e.g., PLD)")
-    group.add_argument("--all", action="store_true", help="Evaluate all tickers in golden dataset")
-    group.add_argument(
-        "--sector", type=str, help="Evaluate all tickers in a specific sector (e.g., industrial)"
+    parser.add_argument(
+        "--tickers",
+        nargs="+",
+        help="Specific tickers to process (default: all from golden dataset)"
     )
-
-    # Output options
-    parser.add_argument("--output", type=str, help="Save results to JSON file")
-    parser.add_argument("--quiet", action="store_true", help="Suppress detailed output")
-
+    parser.add_argument(
+        "--regenerate",
+        action="store_true",
+        help="Regenerate all outputs (ignore cached golden outputs)"
+    )
+    parser.add_argument(
+        "--cached-only",
+        action="store_true",
+        help="Use only cached outputs (fail if not cached)"
+    )
+    parser.add_argument(
+        "--dataset",
+        type=Path,
+        help="Path to golden dataset CSV"
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path(__file__).parent / "results" / "evaluation_results.json",
+        help="Output path for results JSON"
+    )
+    
     args = parser.parse_args()
-
-    # Initialize evaluator
-    golden_dataset_path = Path(__file__).parent / "golden_dataset.csv"
-    evaluator = Evaluator(golden_dataset_path)
-
-    # Determine which tickers to evaluate
-    if args.ticker:
-        tickers = [args.ticker.upper()]
-    elif args.all:
-        tickers = evaluator.list_available_tickers()
-    else:  # args.sector
-        sector_filter = args.sector.lower()
-        tickers = [
-            ticker
-            for ticker, record in evaluator.golden_records.items()
-            if record.sector.lower() == sector_filter
-        ]
-        if not tickers:
-            print(f"❌ No tickers found for sector: {args.sector}")
-            print(f"Available sectors: {set(r.sector for r in evaluator.golden_records.values())}")
-            sys.exit(1)
-
-    print(f"\n🚀 Evaluating {len(tickers)} REIT(s)...\n")
-
-    # Run evaluations
-    # NOTE: This is a placeholder - actual implementation would run full pipeline
+    
+    # Load golden dataset
     try:
-        results = []
-        for ticker in tickers:
-            print(f"⏳ Processing {ticker}...")
-            # In production, this would call run_evaluation_for_ticker(ticker)
-            # For now, we demonstrate the evaluator with mock data
-
-            # Mock generated risks (in real implementation, these come from LLM)
-            golden = evaluator.get_golden_record(ticker)
-            mock_generated_risks = golden.risks  # Perfect match for demonstration
-
-            result = evaluator.evaluate_single(ticker, mock_generated_risks)
-            results.append(result)
-
-        # Display results
-        if not args.quiet:
-            print_results(results, show_details=True)
-
-        # Save to file if requested
-        if args.output:
-            output_data = {
-                "results": [r.to_dict() for r in results],
-                "aggregate": evaluator.get_aggregate_metrics(results),
-                "sector_breakdown": evaluator.get_sector_breakdown(results),
-            }
-            with open(args.output, "w") as f:
-                json.dump(output_data, f, indent=2)
-            print(f"✅ Results saved to {args.output}")
-
-        print("\n✅ Evaluation complete!")
-
-    except Exception as e:
-        print(f"\n❌ Evaluation failed: {e}")
+        golden_data = load_golden_dataset(args.dataset)
+    except FileNotFoundError as e:
+        logger.error(f"Error: {e}")
         sys.exit(1)
+    
+    # Filter to specific tickers if requested
+    if args.tickers:
+        ticker_set = set(t.upper() for t in args.tickers)
+        golden_data = [
+            item for item in golden_data 
+            if item["ticker"].upper() in ticker_set
+        ]
+        logger.info(f"Filtered to {len(golden_data)} requested tickers")
+    
+    # Initialize orchestrator and golden output manager
+    orchestrator = RiskOrchestrator(cache_enabled=True)
+    golden_manager = GoldenOutputManager()
+    
+    # Show cache status
+    cached_tickers = golden_manager.list_cached_tickers()
+    logger.info(f"Found {len(cached_tickers)} cached golden outputs: {', '.join(cached_tickers)}")
+    
+    # Process each ticker
+    results = {
+        "metadata": {
+            "run_date": datetime.utcnow().isoformat(),
+            "total_tickers": len(golden_data),
+            "regenerate_mode": args.regenerate,
+            "cached_only_mode": args.cached_only
+        },
+        "tickers": []
+    }
+    
+    success_count = 0
+    failure_count = 0
+    cached_count = 0
+    
+    for item in golden_data:
+        ticker = item["ticker"]
+        
+        # Process ticker
+        result = process_ticker(
+            ticker,
+            orchestrator,
+            golden_manager,
+            use_cached=not args.cached_only,
+            regenerate=args.regenerate
+        )
+        
+        if result:
+            # Add expert risks for comparison
+            result["expert_risks"] = item["expert_risks"]
+            result["sector"] = item["sector"]
+            results["tickers"].append(result)
+            
+            success_count += 1
+            if result["source"] == "cached_golden_output":
+                cached_count += 1
+        else:
+            failure_count += 1
+    
+    # Save results
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    with open(args.output, 'w', encoding='utf-8') as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+    
+    # Summary
+    logger.info(f"\n{'='*60}")
+    logger.info("EVALUATION SUMMARY")
+    logger.info(f"{'='*60}")
+    logger.info(f"Total tickers:    {len(golden_data)}")
+    logger.info(f"✓ Successful:     {success_count}")
+    logger.info(f"  - From cache:   {cached_count}")
+    logger.info(f"  - From Groq:    {success_count - cached_count}")
+    logger.info(f"✗ Failed:         {failure_count}")
+    logger.info(f"\nResults saved to: {args.output}")
+    logger.info(f"{'='*60}\n")
+    
+    return 0 if failure_count == 0 else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

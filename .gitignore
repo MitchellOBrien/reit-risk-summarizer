@@ -48,6 +48,9 @@ htmlcov/
 .tox/
 .hypothesis/
 
+# Evaluation results (regeneratable)
+evaluation/results/
+
 # Type checking
 .mypy_cache/
 .dmypy.json
