@@ -1,0 +1,15 @@
+{
+  "ticker": "PLD",
+  "company_name": "Prologis",
+  "sector": "Industrial/Logistics",
+  "model": "llama-3.3-70b-versatile",
+  "prompt_version": "v1.0",
+  "generated_at": "2026-01-22T10:01:00Z",
+  "risks": [
+    "Significant geographic concentration with nearly one-third of properties and income derived from California real estate markets",
+    "Heavy reliance on Amazon as largest tenant at 6.4% of total revenues, with top ten customers representing 15.8% of income",
+    "Substantial foreign currency exposure with $10.6 billion of assets denominated in international currencies across global operations",
+    "Ongoing development activities require major capital commitments with risks of construction cost overruns and lease-up delays",
+    "Exposure to interest rate fluctuations through variable-rate debt obligations and upcoming debt refinancing requirements"
+  ]
+}

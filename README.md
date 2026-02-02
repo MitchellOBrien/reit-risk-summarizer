@@ -88,17 +88,15 @@ reit-risk-summarizer/
 │   └── exploration.ipynb            # Data exploration, analysis
 │
 ├── scripts/                         # Utility scripts
-│   └── fetch_10ks.py               # Pre-fetch 10-K data
-│
-├── docker/
-│   ├── Dockerfile                   # Container definition
-│   └── docker-compose.yml           # Multi-service orchestration
+│   └── generate_evaluation_report.py  # Generate human-readable reports
 │
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml                   # Run tests on PRs
 │       └── deploy.yml               # Deploy on merge
 │
+├── Dockerfile                       # Container definition
+├── docker-compose.yml               # Multi-service orchestration
 ├── pyproject.toml                   # Project config & dependencies
 ├── uv.lock                          # Locked dependencies
 ├── Makefile                         # Common commands
@@ -658,7 +656,58 @@ gcloud run deploy reit-risk-summarizer \
   ... # other flags
 ```
 
-#### CI/CD with Cloud Build
+---
+
+## 🚀 CI/CD & Quality Monitoring
+
+This project includes production-ready GitHub Actions workflows for automated testing, deployment, and quality monitoring.
+
+### Workflows
+
+**1. Main CI/CD Pipeline** ([`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml))
+- **Runs on:** Every push, pull request, manual trigger
+- **Steps:** Lint → Type check → Unit tests → Integration tests → Docker build → Security scan
+- **Deploys:** Docker image to registry on merge to `main`
+
+**2. Scheduled Evaluation** ([`.github/workflows/scheduled-evaluation.yml`](.github/workflows/scheduled-evaluation.yml))
+- **Runs on:** Every Monday at 9 AM UTC (cron) + manual trigger
+- **Steps:** Run evaluation pipeline → Generate metrics → Upload results as artifacts
+- **Purpose:** Weekly quality monitoring of LLM outputs against golden dataset
+
+### How They Work Together
+
+```
+Scheduled Workflow (Weekly) → evaluation_results.json ← Read by /evaluation endpoints
+Main CI/CD (Every Push)     → Deploy FastAPI app       → Serve pre-computed metrics
+```
+
+The API doesn't **run** evaluations (expensive LLM calls), it **serves** pre-computed results (fast JSON reads).
+
+### Quick Start
+
+**Run tests locally:**
+```bash
+pytest tests/unit/ -v --cov
+```
+
+**Trigger evaluation manually:**
+```bash
+# Via GitHub UI: Actions → Scheduled Evaluation → Run workflow
+# Or via CLI:
+gh workflow run scheduled-evaluation.yml
+```
+
+**View results:**
+```bash
+# Download latest evaluation results
+gh run download --name evaluation-results
+```
+
+📖 **[Full CI/CD Documentation](.github/workflows/README.md)** - Detailed workflow explanations, troubleshooting, secrets setup, monitoring tips, and more.
+
+---
+
+#### CI/CD with Cloud Build (Alternative)
 
 Create `cloudbuild.yaml`:
 ```yaml

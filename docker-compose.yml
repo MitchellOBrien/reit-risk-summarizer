@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - SEC_API_USER_AGENT=${SEC_API_USER_AGENT:-reit-risk-summarizer/1.0}
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./evaluation/results:/app/evaluation/results
+      - ./evaluation/golden_outputs:/app/evaluation/golden_outputs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+  
+  # Optional: Add Prometheus for metrics monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    restart: unless-stopped
+    profiles: ["monitoring"]
+  
+  # Optional: Add Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    restart: unless-stopped
+    profiles: ["monitoring"]
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  default:
+    name: reit-risk-network

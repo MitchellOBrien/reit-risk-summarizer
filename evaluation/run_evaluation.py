@@ -27,7 +27,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import pandas as pd
+
 from reit_risk_summarizer.services.orchestrator import RiskOrchestrator
+from evaluation.metrics import evaluate_summary
 from reit_risk_summarizer.exceptions import (
     SECFetchError,
     RiskExtractionError,
@@ -48,35 +51,35 @@ def load_golden_dataset(dataset_path: Optional[Path] = None) -> list[dict]:
     
     Args:
         dataset_path: Path to golden dataset CSV. 
-                     Defaults to reit-risk-golden-dataset.csv in project root.
+                     Defaults to golden_dataset.csv in evaluation folder.
     
     Returns:
         List of dicts with ticker, company_name, sector, and expert risks
     """
     if dataset_path is None:
-        # Default to project root
-        dataset_path = Path(__file__).parent.parent / "reit-risk-golden-dataset.csv"
+        # Default to evaluation/golden_dataset.csv
+        dataset_path = Path(__file__).parent / "golden_dataset.csv"
     
     if not dataset_path.exists():
         raise FileNotFoundError(f"Golden dataset not found at {dataset_path}")
     
+    # Read CSV and group by ticker
+    df = pd.read_csv(dataset_path)
+    
     tickers = []
-    with open(dataset_path, 'r', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            # Extract the 5 expert-labeled risks
-            expert_risks = [
-                row.get(f"risk_{i}", "").strip()
-                for i in range(1, 6)
-                if row.get(f"risk_{i}", "").strip()
-            ]
-            
-            tickers.append({
-                "ticker": row["ticker"].strip(),
-                "company_name": row.get("company_name", "").strip(),
-                "sector": row.get("sector", "").strip(),
-                "expert_risks": expert_risks
-            })
+    for ticker_name in df['ticker'].unique():
+        # Get all rows for this ticker and sort by risk_rank
+        ticker_data = df[df['ticker'] == ticker_name].sort_values('risk_rank')
+        
+        # Extract risk descriptions in rank order
+        expert_risks = ticker_data['risk_description'].tolist()
+        
+        tickers.append({
+            "ticker": ticker_name,
+            "company_name": ticker_data['company_name'].iloc[0],
+            "sector": ticker_data['sector'].iloc[0],
+            "expert_risks": expert_risks
+        })
     
     logger.info(f"Loaded {len(tickers)} tickers from golden dataset")
     return tickers
@@ -87,7 +90,8 @@ def process_ticker(
     orchestrator: RiskOrchestrator,
     golden_manager: GoldenOutputManager,
     use_cached: bool = True,
-    regenerate: bool = False
+    regenerate: bool = False,
+    cached_only: bool = False
 ) -> Optional[dict]:
     """Process a single ticker and return results.
     
@@ -97,6 +101,7 @@ def process_ticker(
         golden_manager: GoldenOutputManager instance
         use_cached: If True, use cached golden output if available
         regenerate: If True, ignore cache and regenerate
+        cached_only: If True, fail if no cached output exists (don't call API)
     
     Returns:
         Dict with ticker, generated risks, and metadata, or None if failed
@@ -119,6 +124,9 @@ def process_ticker(
                 "source": "cached_golden_output",
                 "timestamp": datetime.utcnow().isoformat()
             }
+        elif cached_only:
+            logger.error(f"✗ No cached output found for {ticker} (cached-only mode)")
+            return None
     
     # Generate new output
     try:
@@ -206,6 +214,15 @@ def main():
         ]
         logger.info(f"Filtered to {len(golden_data)} requested tickers")
     
+    # Build sector-to-risks mapping for sector-specificity metric
+    golden_dataset_path = Path(__file__).parent / "golden_dataset.csv"
+    df = pd.read_csv(golden_dataset_path)
+    all_sectors_risks = {}
+    for sector in df['sector'].unique():
+        sector_risks = df[df['sector'] == sector]['risk_description'].tolist()
+        all_sectors_risks[sector] = sector_risks
+    logger.info(f"Loaded {len(all_sectors_risks)} sectors for specificity scoring")
+    
     # Initialize orchestrator and golden output manager
     orchestrator = RiskOrchestrator(cache_enabled=True)
     golden_manager = GoldenOutputManager()
@@ -237,14 +254,34 @@ def main():
             ticker,
             orchestrator,
             golden_manager,
-            use_cached=not args.cached_only,
-            regenerate=args.regenerate
+            use_cached=True,
+            regenerate=args.regenerate,
+            cached_only=args.cached_only
         )
         
         if result:
             # Add expert risks for comparison
             result["expert_risks"] = item["expert_risks"]
             result["sector"] = item["sector"]
+            
+            # Calculate Phase 2 metrics
+            try:
+                metrics = evaluate_summary(
+                    generated_risks=result["risks"],
+                    golden_risks=item["expert_risks"],
+                    sector=item["sector"],
+                    all_sectors_risks=all_sectors_risks
+                )
+                result["metrics"] = metrics
+                logger.info(
+                    f"Metrics - Similarity: {metrics['semantic_similarity']:.3f}, "
+                    f"NDCG: {metrics['ndcg_at_5']:.3f}, "
+                    f"Specificity: {metrics['sector_specificity']:.3f}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to calculate metrics for {ticker}: {e}")
+                result["metrics"] = None
+            
             results["tickers"].append(result)
             
             success_count += 1
@@ -252,6 +289,30 @@ def main():
                 cached_count += 1
         else:
             failure_count += 1
+    
+    # Calculate aggregate metrics
+    if success_count > 0:
+        ticker_results = results["tickers"]
+        valid_metrics = [t["metrics"] for t in ticker_results if t.get("metrics")]
+        
+        if valid_metrics:
+            results["summary_metrics"] = {
+                "semantic_similarity": {
+                    "mean": sum(m["semantic_similarity"] for m in valid_metrics) / len(valid_metrics),
+                    "min": min(m["semantic_similarity"] for m in valid_metrics),
+                    "max": max(m["semantic_similarity"] for m in valid_metrics),
+                },
+                "ndcg_at_5": {
+                    "mean": sum(m["ndcg_at_5"] for m in valid_metrics) / len(valid_metrics),
+                    "min": min(m["ndcg_at_5"] for m in valid_metrics),
+                    "max": max(m["ndcg_at_5"] for m in valid_metrics),
+                },
+                "sector_specificity": {
+                    "mean": sum(m["sector_specificity"] for m in valid_metrics) / len(valid_metrics),
+                    "min": min(m["sector_specificity"] for m in valid_metrics),
+                    "max": max(m["sector_specificity"] for m in valid_metrics),
+                },
+            }
     
     # Save results
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -267,6 +328,15 @@ def main():
     logger.info(f"  - From cache:   {cached_count}")
     logger.info(f"  - From Groq:    {success_count - cached_count}")
     logger.info(f"✗ Failed:         {failure_count}")
+    
+    # Show aggregate metrics if available
+    if "summary_metrics" in results:
+        logger.info(f"\nAGGREGATE METRICS (n={len(valid_metrics)}):")
+        sm = results["summary_metrics"]
+        logger.info(f"  Semantic Similarity: {sm['semantic_similarity']['mean']:.3f} (min={sm['semantic_similarity']['min']:.3f}, max={sm['semantic_similarity']['max']:.3f})")
+        logger.info(f"  NDCG@5:             {sm['ndcg_at_5']['mean']:.3f} (min={sm['ndcg_at_5']['min']:.3f}, max={sm['ndcg_at_5']['max']:.3f})")
+        logger.info(f"  Sector-Specificity: {sm['sector_specificity']['mean']:.3f} (min={sm['sector_specificity']['min']:.3f}, max={sm['sector_specificity']['max']:.3f})")
+    
     logger.info(f"\nResults saved to: {args.output}")
     logger.info(f"{'='*60}\n")
     

@@ -1,0 +1,171 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # Allow manual triggers
+
+env:
+  PYTHON_VERSION: '3.13'
+  UV_VERSION: '0.5.14'
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venv
+            ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+      
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv pip install -e ".[dev,test]"
+      
+      - name: Run linting
+        run: |
+          source .venv/bin/activate
+          ruff check src/ tests/ evaluation/
+        continue-on-error: true  # Don't fail build on linting errors yet
+      
+      - name: Run type checking
+        run: |
+          source .venv/bin/activate
+          mypy src/ evaluation/
+        continue-on-error: true  # Don't fail build on type errors yet
+      
+      - name: Run unit tests
+        run: |
+          source .venv/bin/activate
+          pytest tests/unit/ -v --cov=src --cov=evaluation --cov=scripts --cov-report=xml --cov-report=term
+  
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv pip install -e ".[dev,test]"
+      
+      - name: Run integration tests
+        run: |
+          source .venv/bin/activate
+          pytest tests/integration/ -v
+        continue-on-error: true  # Integration tests may not exist yet
+  
+  docker-build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+        continue-on-error: true  # Skip if secrets not configured
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ secrets.DOCKER_USERNAME != '' }}
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/reit-risk-summarizer:latest
+            ${{ secrets.DOCKER_USERNAME }}/reit-risk-summarizer:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+        continue-on-error: true  # Skip if Docker Hub not configured
+  
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv pip install -e ".[dev,test]"
+      
+      - name: Run safety check
+        run: |
+          source .venv/bin/activate
+          pip install safety
+          safety check --json
+        continue-on-error: true  # Don't fail build on vulnerabilities yet
+      
+      - name: Run bandit security linter
+        run: |
+          source .venv/bin/activate
+          pip install bandit
+          bandit -r src/ -f json -o bandit-report.json
+        continue-on-error: true
+      
+      - name: Upload security reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+        continue-on-error: true

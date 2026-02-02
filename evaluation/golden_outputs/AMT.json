@@ -1,0 +1,15 @@
+{
+  "ticker": "AMT",
+  "company_name": "American Tower",
+  "sector": "Infrastructure/Towers",
+  "model": "llama-3.3-70b-versatile",
+  "prompt_version": "v1.0",
+  "generated_at": "2026-01-22T10:00:00Z",
+  "risks": [
+    "Substantial revenue from small number of wireless carriers (AT&T, Verizon, T-Mobile)",
+    "Operates in 25+ countries with revenues in multiple currencies",
+    "Carriers consolidating or sharing tower infrastructure",
+    "New technologies (satellite, small cells, future 6G) may reduce tower demand",
+    "Leases land under many towers rather than owning it"
+  ]
+}

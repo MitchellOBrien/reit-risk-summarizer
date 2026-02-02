@@ -8,7 +8,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from .config import get_settings
 from .middlewares import error_handling_middleware, logging_middleware
-from .routers import health, risks
+from .routers import evaluation, health, risks
 
 # Configure logging
 logging.basicConfig(
@@ -54,6 +54,7 @@ app.middleware("http")(error_handling_middleware)
 # Include routers. Routers have the endpoints which define the functionality. Endpoints are for get, delete, etc.
 app.include_router(health.router)
 app.include_router(risks.router)
+app.include_router(evaluation.router)
 
 
 @app.on_event("startup")

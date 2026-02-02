@@ -152,15 +152,15 @@ def calculate_sector_specificity(
 
     Algorithm:
     1. Embed the risk text
-    2. Compare similarity to risks from same sector vs. other sectors
-    3. Specificity = (avg same-sector similarity) - (avg other-sector similarity)
+    2. Find best match in same sector vs. best match in other sectors
+    3. Specificity = (max same-sector similarity) - (max other-sector similarity)
     4. Normalize to [0, 1] range
 
     Interpretation:
-    - 0.65+ = Highly specific to sector (good)
-    - 0.40-0.65 = Moderately specific (target range)
-    - 0.20-0.40 = Somewhat generic
-    - <0.20 = Generic boilerplate (bad)
+    - 0.70+ = Highly specific to sector (good)
+    - 0.50-0.70 = Moderately specific (target range)
+    - 0.30-0.50 = Somewhat generic
+    - <0.30 = Generic boilerplate (bad)
 
     Args:
         risk_text: The risk description to evaluate
@@ -203,24 +203,25 @@ def calculate_sector_specificity(
     same_sector_embeddings = model.encode(same_sector_risks, convert_to_numpy=True)
     other_sectors_embeddings = model.encode(other_sectors_risks, convert_to_numpy=True)
 
-    # Calculate average similarity to same sector vs. other sectors
+    # Calculate MAX similarity to same sector vs. other sectors
+    # Using max instead of mean to capture distinctive sector-specific terminology
     same_sector_similarities = cosine_similarity(risk_embedding, same_sector_embeddings)
     other_sectors_similarities = cosine_similarity(
         risk_embedding, other_sectors_embeddings
     )
 
-    avg_same = float(np.mean(same_sector_similarities))
-    avg_other = float(np.mean(other_sectors_similarities))
+    max_same = float(np.max(same_sector_similarities))
+    max_other = float(np.max(other_sectors_similarities))
 
-    # Specificity = how much more similar to same sector vs. others
+    # Specificity = how much better the best same-sector match is vs. best other-sector match
     # Raw difference is typically in [-1, 1] range
     # We normalize to [0, 1] by adding 1 and dividing by 2
-    raw_specificity = avg_same - avg_other
+    raw_specificity = max_same - max_other
     normalized_specificity = (raw_specificity + 1) / 2
 
     logger.debug(
         f"Sector specificity for {sector}: {normalized_specificity:.3f} "
-        f"(same={avg_same:.3f}, other={avg_other:.3f})"
+        f"(max_same={max_same:.3f}, max_other={max_other:.3f})"
     )
 
     return normalized_specificity

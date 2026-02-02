@@ -1,0 +1,15 @@
+{
+  "ticker": "EQIX",
+  "company_name": "Equinix",
+  "sector": "Data Centers",
+  "model": "llama-3.3-70b-versatile",
+  "prompt_version": "v1.0",
+  "generated_at": "2026-01-22T10:02:00Z",
+  "risks": [
+    "Economic downturns and recession could negatively impact business operations",
+    "Rising electricity costs and availability constraints affect profitability",
+    "International operations across 30+ countries expose the company to currency fluctuations",
+    "Heavy reliance on technology sector customers and cloud service providers",
+    "Critical infrastructure requires continuous power and cooling to prevent service disruptions"
+  ]
+}

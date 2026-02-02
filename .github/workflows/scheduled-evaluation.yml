@@ -1,0 +1,88 @@
+name: Scheduled Evaluation
+
+on:
+  schedule:
+    # Run every Monday at 9:00 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:  # Allow manual triggers
+    inputs:
+      regenerate:
+        description: 'Regenerate all outputs (ignore cache)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  PYTHON_VERSION: '3.13'
+
+jobs:
+  run-evaluation:
+    name: Run Quality Evaluation
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv pip install -e ".[dev,test]"
+      
+      - name: Set up environment variables
+        run: |
+          echo "GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}" >> $GITHUB_ENV
+          echo "SEC_API_USER_AGENT=${{ secrets.SEC_API_USER_AGENT }}" >> $GITHUB_ENV
+      
+      - name: Run evaluation (cached-only)
+        if: ${{ !inputs.regenerate }}
+        run: |
+          source .venv/bin/activate
+          python -m evaluation.run_evaluation --cached-only
+        continue-on-error: true
+      
+      - name: Run evaluation (regenerate)
+        if: ${{ inputs.regenerate }}
+        run: |
+          source .venv/bin/activate
+          python -m evaluation.run_evaluation --regenerate
+        continue-on-error: true
+      
+      - name: Generate evaluation report
+        run: |
+          source .venv/bin/activate
+          python scripts/generate_evaluation_report.py
+      
+      - name: Upload evaluation results
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-results
+          path: |
+            evaluation/results/evaluation_results.json
+            evaluation/results/evaluation_report.txt
+      
+      - name: Post results to PR (if applicable)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('evaluation/results/evaluation_report.txt', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 📊 Evaluation Results\n\n\`\`\`\n${report}\n\`\`\``
+            });
+        continue-on-error: true
